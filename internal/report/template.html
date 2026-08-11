@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>perfadvisor report, {{.Snap.Hostname}}, {{.Generated}}</title>
+<style>
+  :root { --high:#c0392b; --medium:#d68910; --info:#2471a3; --ink:#1c2833; --mut:#6b7a86; --bg:#f4f6f7; --card:#ffffff; }
+  * { box-sizing:border-box; }
+  body { font:15px/1.55 "Segoe UI",system-ui,sans-serif; color:var(--ink); background:var(--bg); margin:0; padding:24px; }
+  .wrap { max-width:920px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 2px; } h2 { font-size:17px; margin:28px 0 10px; }
+  .sub { color:var(--mut); font-size:13px; margin-bottom:18px; }
+  .card { background:var(--card); border:1px solid #dde3e8; border-radius:8px; padding:14px 16px; margin-bottom:12px; }
+  .scorebar { display:flex; align-items:center; gap:16px; }
+  .score { font-size:40px; font-weight:600; }
+  .chips span { display:inline-block; padding:2px 10px; border-radius:12px; color:#fff; font-size:12px; margin-right:6px; }
+  .chip-high { background:var(--high); } .chip-medium { background:var(--medium); } .chip-info { background:var(--info); }
+  .f-high { border-left:4px solid var(--high); } .f-medium { border-left:4px solid var(--medium); } .f-info { border-left:4px solid var(--info); }
+  .f-title { font-weight:600; } .f-sum { margin:4px 0 8px; }
+  ul { margin:4px 0 8px; padding-left:20px; } li { margin:2px 0; }
+  .label { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); margin-top:8px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:4px 8px; border-bottom:1px solid #e8ecef; vertical-align:top; }
+  th { color:var(--mut); font-weight:600; }
+  td.num, th.num { text-align:right; white-space:nowrap; }
+  .cmd { color:var(--mut); font-family:Consolas,monospace; font-size:12px; word-break:break-all; }
+  .meter { background:#e8ecef; border-radius:4px; height:10px; width:160px; display:inline-block; vertical-align:middle; }
+  .meter i { display:block; height:10px; border-radius:4px; background:var(--info); }
+  .off { color:var(--mut); }
+  .foot { color:var(--mut); font-size:12px; margin-top:24px; }
+</style>
+</head>
+<body><div class="wrap">
+<h1>perfadvisor report</h1>
+<div class="sub">{{.Snap.Hostname}} ({{.Snap.OSVersion}}), generated {{.Generated}},
+sample {{.Snap.SampleSeconds}} s{{if not .Snap.Elevated}}, standard user (not elevated){{else}}, elevated{{end}}</div>
+
+<div class="card scorebar">
+  <div class="score">{{.Score}}<span style="font-size:16px;color:var(--mut)">/100</span></div>
+  <div class="chips">
+    <span class="chip-high">{{.High}} high</span>
+    <span class="chip-medium">{{.Medium}} medium</span>
+    <span class="chip-info">{{.InfoCount}} info</span>
+    <div class="sub" style="margin:6px 0 0">Rough health score. Work top to bottom; high first.</div>
+  </div>
+</div>
+
+<h2>Findings</h2>
+{{if not .Findings}}<div class="card">No findings. Nothing in the sample or in Windows history crossed a threshold.</div>{{end}}
+{{range .Findings}}
+<div class="card f-{{sev .Severity}}">
+  <div class="f-title"><span class="chips"><span class="chip-{{sev .Severity}}">{{.Severity}}</span></span> {{.Title}}</div>
+  <div class="f-sum">{{.Summary}}</div>
+  {{if .Evidence}}<div class="label">Evidence</div><ul>{{range .Evidence}}<li>{{.}}</li>{{end}}</ul>{{end}}
+  {{if .Advice}}<div class="label">What to do</div><ul>{{range .Advice}}<li>{{.}}</li>{{end}}</ul>{{end}}
+</div>
+{{end}}
+
+<h2>Live sample</h2>
+<div class="card">
+  <table>
+    <tr><th>CPU</th><td>{{.Snap.CPUModel}}, {{.Snap.LogicalCores}} logical cores</td>
+        <td class="num">avg {{f0 .Snap.CPUAvgPercent}}%, peak {{f0 .Snap.CPUPeakPercent}}%</td>
+        <td><span class="meter"><i style="width:{{f0 (clamp .Snap.CPUAvgPercent)}}%"></i></span></td></tr>
+    <tr><th>Memory</th><td>{{gb .Snap.Memory.UsedMB}} of {{gb .Snap.Memory.TotalMB}} GB</td>
+        <td class="num">{{f0 .Snap.Memory.UsedPercent}}%</td>
+        <td><span class="meter"><i style="width:{{f0 (clamp .Snap.Memory.UsedPercent)}}%"></i></span></td></tr>
+    {{range .Snap.Disks}}
+    <tr><th>Disk {{.Mount}}{{if .System}} (system){{end}}</th><td>{{f0 .FreeGB}} GB free of {{f0 .TotalGB}} GB</td>
+        <td class="num">{{f0 .UsedPercent}}% used</td>
+        <td><span class="meter"><i style="width:{{f0 (clamp .UsedPercent)}}%"></i></span></td></tr>
+    {{end}}
+    <tr><th>Uptime</th><td colspan="3">{{days .Snap.Uptime}} days since kernel start ({{dt .Snap.BootTime}})</td></tr>
+    {{if .Snap.PowerPlan.Name}}<tr><th>Power plan</th><td colspan="3">{{.Snap.PowerPlan.Name}}</td></tr>{{end}}
+  </table>
+</div>
+
+<div class="card">
+  <div class="label">Top processes by CPU (share of one core, can exceed 100)</div>
+  <table><tr><th>Process</th><th class="num">CPU %</th><th class="num">Memory MB</th></tr>
+  {{range .Snap.TopCPU}}<tr><td>{{.Name}}</td><td class="num">{{f1 .CPUPercent}}</td><td class="num">{{f0 .MemoryMB}}</td></tr>{{end}}
+  </table>
+  <div class="label">Top processes by memory</div>
+  <table><tr><th>Process</th><th class="num">Memory MB</th><th class="num">CPU %</th></tr>
+  {{range .Snap.TopMem}}<tr><td>{{.Name}}</td><td class="num">{{f0 .MemoryMB}}</td><td class="num">{{f1 .CPUPercent}}</td></tr>{{end}}
+  </table>
+</div>
+
+<h2>Startup</h2>
+<div class="card">
+  {{if .Snap.Autoruns}}
+  <table><tr><th>Autorun</th><th>Source</th><th>State</th><th>Command</th></tr>
+  {{range .Snap.Autoruns}}
+  <tr{{if not .Enabled}} class="off"{{end}}><td>{{.Name}}</td><td>{{.Source}}</td>
+      <td>{{if .Enabled}}Enabled{{if not .EnabledKnown}} (assumed){{end}}{{else}}Disabled{{end}}</td>
+      <td class="cmd">{{.Command}}</td></tr>
+  {{end}}
+  </table>
+  {{else}}No autorun entries found.{{end}}
+</div>
+
+{{if .Snap.BootEvents}}
+<div class="card">
+  <div class="label">Boot history (Diagnostics-Performance log, newest first)</div>
+  <table><tr><th>When</th><th>Event</th><th>Detail</th><th class="num">Duration</th></tr>
+  {{range .Snap.BootEvents}}
+  <tr><td>{{dt .Time}}</td><td>{{.EventID}}</td>
+      <td>{{if eq .EventID 100}}Full boot{{else}}{{.App}}{{if .Path}} <span class="cmd">{{.Path}}</span>{{end}}{{end}}</td>
+      <td class="num">{{if eq .EventID 100}}{{sec .BootMs}} s{{else}}{{sec .DegradationMs}} s degradation{{end}}</td></tr>
+  {{end}}
+  </table>
+</div>
+{{end}}
+
+{{if .Snap.HangEvents}}
+<div class="card">
+  <div class="label">Application hangs, last 14 days</div>
+  <table><tr><th>When</th><th>Application</th></tr>
+  {{range .Snap.HangEvents}}<tr><td>{{dt .Time}}</td><td>{{.App}}</td></tr>{{end}}
+  </table>
+</div>
+{{end}}
+
+{{if .Snap.Unchecked}}
+<h2>Not checked this run</h2>
+<div class="card">
+  <table><tr><th>Source</th><th>Why</th></tr>
+  {{range .Snap.Unchecked}}<tr><td>{{.What}}</td><td>{{.Why}}</td></tr>{{end}}
+  </table>
+</div>
+{{end}}
+
+<div class="foot">Generated by perfadvisor v{{.Version}}. All data was collected and stays on this device;
+this file was written locally and is shared only if you share it.
+{{if not .Snap.Elevated}}Tip: running perfadvisor elevated unlocks deeper boot analysis.{{end}}</div>
+</div></body></html>
