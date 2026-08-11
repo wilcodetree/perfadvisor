@@ -19,7 +19,7 @@ import (
 	"perfadvisor/internal/tui"
 )
 
-const version = "0.5.1"
+const version = "0.6.0"
 
 //go:embed README.md
 var readmeMD string

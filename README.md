@@ -10,15 +10,19 @@ feature.
 - Samples the live system (CPU, memory, disks, per-process usage) for about a minute.
 - Live saturation signals via Windows performance counters (PDH, English counter
   names so any Windows language works): processor queue, CPU throttling, disk
-  queue and latency, hard faults, GPU engine utilization.
+  queue and latency, hard faults, GPU engine utilization, per-core spread, wifi
+  signal and disconnects, and battery/AC state. `analyze` and `export` sample
+  these for the whole run (average and peak), not just the live dashboard.
 - Mines what Windows already logged: boot duration and boot degradation culprits
   (Diagnostics-Performance log), application hangs, autorun inventory including
   Task Manager's enabled/disabled state, power plan, pending reboots, and
   third-party automatic services.
-- Runs a curated offline rule set and writes a self-contained HTML report with
-  ranked findings and concrete advice.
+- Runs a curated offline rule set, including throttling, disk-bound, gpu-saturated,
+  memory-thrashing, single-thread-bound core imbalance, and wifi instability, and
+  writes a self-contained HTML report with ranked findings and concrete advice.
 - Exports a markdown diagnostic bundle you can paste into Claude for a tailored
-  second opinion.
+  second opinion, including the raw pressure/wifi/battery numbers even when no
+  rule fired.
 
 Everything stays on this device. No network calls, no central collection, no
 background process. One explicit exception exists: the optional Microsoft To Do

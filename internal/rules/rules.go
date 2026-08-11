@@ -13,6 +13,7 @@ var allRules = []rule{
 	bootSlow, bootDegraders, autorunOverload, syncClientsAtBoot, heavyAutoruns,
 	memoryPressure, cpuSustained, diskFull, longUptime, pendingReboot,
 	powerSaver, appHangs, autoServices,
+	cpuThrottled, diskBound, gpuSaturated, memoryThrashing, coreImbalance, wifiUnstable,
 }
 
 func matchAny(hay string, needles ...string) bool {
@@ -291,17 +292,23 @@ func pendingReboot(s *collect.Snapshot) *Finding {
 
 func powerSaver(s *collect.Snapshot) *Finding {
 	name := strings.ToLower(s.PowerPlan.Name + " " + s.PowerPlan.Raw)
-	if name == " " {
+	saverByPlan := strings.Contains(name, "saver") || strings.Contains(name, "besparing") ||
+		strings.Contains(name, "a1841308-3541-4fab-bc81-f71556f20b4a")
+	saverByFlag := s.Power.OK && s.Power.SaverActive
+	if !saverByPlan && !saverByFlag {
 		return nil
 	}
-	if !strings.Contains(name, "saver") && !strings.Contains(name, "besparing") &&
-		!strings.Contains(name, "a1841308-3541-4fab-bc81-f71556f20b4a") {
-		return nil
+	var ev []string
+	if s.PowerPlan.Name != "" {
+		ev = append(ev, "Active plan: "+s.PowerPlan.Name)
+	}
+	if saverByFlag {
+		ev = append(ev, "Windows battery saver was active during the sample")
 	}
 	return &Finding{
-		ID: "power-saver", Severity: Medium, Title: "Power saver plan is active",
-		Summary:  "The power saver plan caps CPU speed. Fine on battery in a pinch, slow everywhere else.",
-		Evidence: []string{"Active plan: " + s.PowerPlan.Name},
+		ID: "power-saver", Severity: Medium, Title: "Power saver is active",
+		Summary:  "Power saver caps CPU speed. Fine on battery in a pinch, slow everywhere else.",
+		Evidence: ev,
 		Advice:   []string{"Switch to Balanced (Settings, System, Power) at least when plugged in."},
 	}
 }
@@ -355,5 +362,162 @@ func autoServices(s *collect.Snapshot) *Finding {
 		Summary:  "Each automatic service adds work to the boot path. Some are needed; leftovers from uninstalled software are not.",
 		Evidence: ev,
 		Advice:   []string{"Review with IT before changing service start types; this list is informational."},
+	}
+}
+
+// cpuThrottled fires when the CPU spent part of the sample running below
+// its base clock, the same signal the TUI verdict line calls "throttled."
+func cpuThrottled(s *collect.Snapshot) *Finding {
+	p := s.Pressure
+	if !p.OK || p.CPUPerfPctMin <= 0 {
+		return nil
+	}
+	if p.CPUPerfPctMin >= 90 {
+		return nil
+	}
+	sev := Medium
+	if p.CPUPerfPctMin < 75 {
+		sev = High
+	}
+	return &Finding{
+		ID: "cpu-throttled", Severity: sev, Title: "CPU ran below its base clock during the sample",
+		Summary:  "Windows reports the processor running under its rated speed, usually a thermal or power limit, not a software problem.",
+		Evidence: []string{fmt.Sprintf("%% Processor Performance dropped to %.0f%% of base clock (averaged %.0f%%) over %d s", p.CPUPerfPctMin, p.CPUPerfPctAvg, s.SampleSeconds)},
+		Advice: []string{
+			"Check the power plan; Balanced or Best Performance, not Power saver.",
+			"If this happens under normal desk use, vents and fans are worth a physical check; heavy sustained throttling on a laptop is often dust or a worn thermal pad.",
+		},
+	}
+}
+
+// diskBound fires on sustained latency or queue depth, distinct from
+// diskFull which only looks at free space.
+func diskBound(s *collect.Snapshot) *Finding {
+	p := s.Pressure
+	if !p.OK {
+		return nil
+	}
+	if p.DiskLatMsAvg < 15 && p.DiskLatMsPeak < 60 && p.DiskQueueAvg < 1 {
+		return nil
+	}
+	sev := Medium
+	if p.DiskLatMsAvg >= 40 || p.DiskQueueAvg >= 3 {
+		sev = High
+	}
+	return &Finding{
+		ID: "disk-bound", Severity: sev, Title: "The disk was a bottleneck during the sample",
+		Summary:  "Anything above a few milliseconds of average latency on an SSD means requests are queueing, not completing instantly. Everything that touches disk feels slow while this holds.",
+		Evidence: []string{fmt.Sprintf("Disk latency averaged %.1f ms, peaked %.1f ms; queue averaged %.1f, peaked %.1f over %d s",
+			p.DiskLatMsAvg, p.DiskLatMsPeak, p.DiskQueueAvg, p.DiskQueuePeak, s.SampleSeconds)},
+		Advice: []string{
+			"Check Task Manager's Disk column for the top offender; a sync client or antivirus scan are the usual suspects.",
+			"A drive over 85 percent full also slows writes; see the disk space finding if it fired.",
+		},
+	}
+}
+
+// gpuSaturated fires when the busiest GPU engine hit saturation for real
+// stretches of the sample, not just a brief spike.
+func gpuSaturated(s *collect.Snapshot) *Finding {
+	p := s.Pressure
+	if !p.OK || p.GPUPctPeak < 90 {
+		return nil
+	}
+	sev := Medium
+	if p.GPUPctAvg >= 70 {
+		sev = High
+	}
+	return &Finding{
+		ID: "gpu-saturated", Severity: sev, Title: "GPU ran at or near its limit during the sample",
+		Summary:  "The busiest GPU engine (Task Manager's headline number) hit saturation. Expected during a video call or a render; worth a look if nothing visibly graphical was running.",
+		Evidence: []string{fmt.Sprintf("GPU utilization averaged %.0f%%, peaked %.0f%% over %d s", p.GPUPctAvg, p.GPUPctPeak, s.SampleSeconds)},
+		Advice: []string{
+			"Check which app is driving it; browsers with many tabs and video calls are common causes.",
+			"If it looks idle-driven, a stuck compositor or background transcode is worth a restart.",
+		},
+	}
+}
+
+// memoryThrashing is distinct from memoryPressure: it fires only when
+// Windows is actually paging (hard faults), not just when RAM% is high.
+func memoryThrashing(s *collect.Snapshot) *Finding {
+	p := s.Pressure
+	if !p.OK {
+		return nil
+	}
+	if p.HardFaultsAvg < 100 || s.Memory.UsedPercent < 75 {
+		return nil
+	}
+	sev := Medium
+	if p.HardFaultsAvg >= 300 && s.Memory.UsedPercent >= 85 {
+		sev = High
+	}
+	ev := []string{fmt.Sprintf("Hard faults averaged %.0f/s, peaked %.0f/s, at %.0f%% RAM in use", p.HardFaultsAvg, p.HardFaultsPeak, s.Memory.UsedPercent)}
+	for i, ps := range s.TopMem {
+		if i >= 3 {
+			break
+		}
+		ev = append(ev, fmt.Sprintf("%s: %.0f MB", ps.Name, ps.MemoryMB))
+	}
+	return &Finding{
+		ID: "memory-thrashing", Severity: sev, Title: "Windows was actively paging memory to disk",
+		Summary:  "Hard faults this high mean RAM ran out and Windows is swapping live data to disk under load, the classic cause of a laptop that stutters even though the CPU graph looks idle.",
+		Evidence: ev,
+		Advice: []string{
+			"Close or restart the biggest memory consumers listed above.",
+			"If this recurs with your normal workload, more RAM is the honest fix; attach this report when you ask IT.",
+		},
+	}
+}
+
+// coreImbalance flags a single-thread-bound workload: one core pegged
+// while the rest sit idle. A different fix (single-thread performance)
+// than cpuSustained, which is about the machine as a whole.
+func coreImbalance(s *collect.Snapshot) *Finding {
+	c := s.Cores
+	if c.NCores < 4 {
+		return nil
+	}
+	if c.MaxCoreAvg < 70 || c.MinCoreAvg > 25 {
+		return nil
+	}
+	return &Finding{
+		ID: "core-imbalance", Severity: Info, Title: fmt.Sprintf("%s carried the load while other cores idled", c.MaxCoreName),
+		Summary:  "One core averaged high load for the whole sample while most of the other cores stayed idle. That is a single-thread-bound workload; more cores would not help it, faster single-thread performance would.",
+		Evidence: []string{fmt.Sprintf("%s averaged %.0f%%, the least-loaded core averaged %.0f%%, across %d logical cores", c.MaxCoreName, c.MaxCoreAvg, c.MinCoreAvg, c.NCores)},
+		Advice: []string{
+			"Identify the process pinning that core in the process list (sorted by CPU); it is usually the top single-core consumer.",
+			"This is normal for some workloads (a single script, a compressor); only worth acting on if it is unexpected.",
+		},
+	}
+}
+
+// wifiUnstable uses the same signal/drop logic as the TUI's wifi history
+// graph, applied to the analyze/export sampling window.
+func wifiUnstable(s *collect.Snapshot) *Finding {
+	w := s.Wifi
+	if !w.OK || w.Samples == 0 {
+		return nil
+	}
+	if w.Drops == 0 && w.SignalPctMin >= 50 {
+		return nil
+	}
+	sev := Medium
+	if w.Drops >= 2 || w.SignalPctMin < 30 {
+		sev = High
+	}
+	ev := []string{fmt.Sprintf("SSID %s: signal averaged %.0f%%, dropped to %d%% at worst, %d disconnect(s) during the sample",
+		w.SSID, w.SignalPctAvg, w.SignalPctMin, w.Drops)}
+	if w.LinkMbpsAvg > 0 {
+		ev = append(ev, fmt.Sprintf("Link rate averaged %.0f Mbps", w.LinkMbpsAvg))
+	}
+	return &Finding{
+		ID: "wifi-unstable", Severity: sev, Title: "WiFi was unstable during the sample",
+		Summary:  "A weak or dropping wifi signal shows up as slow everything, not just slow browsing; sync clients, updates, and cloud apps all wait on it.",
+		Evidence: ev,
+		Advice: []string{
+			"Move closer to the access point or a repeater if this is a fixed desk.",
+			"If this is a recurring spot, raise it with IT; the office wifi coverage map is the fix, not the laptop.",
+		},
 	}
 }

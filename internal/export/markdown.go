@@ -43,6 +43,58 @@ func WriteBundle(snap *collect.Snapshot, findings []rules.Finding, dir, version 
 	}
 
 	w("")
+	w("## Pressure and saturation (live counters, sampled during this run)")
+	w("")
+	w("Same signals the live dashboard's pressure gauges and verdict line use, averaged and peaked")
+	w("across the whole sample window rather than one instant.")
+	if snap.Pressure.OK {
+		p := snap.Pressure
+		w("- CPU queue (runnable threads waiting): avg %.1f, peak %.1f, on %d logical cores", p.CPUQueueAvg, p.CPUQueuePeak, snap.LogicalCores)
+		if p.CPUPerfPctAvg > 0 {
+			w("- CPU clock: avg %.0f%% of base, min %.0f%% of base (below 100%% is normal turbo-down; sustained below 75%% usually means thermal or power throttling)", p.CPUPerfPctAvg, p.CPUPerfPctMin)
+		}
+		w("- Disk: latency avg %.1f ms / peak %.1f ms, queue avg %.1f / peak %.1f", p.DiskLatMsAvg, p.DiskLatMsPeak, p.DiskQueueAvg, p.DiskQueuePeak)
+		w("- Memory hard faults (pages read back from disk): avg %.0f/s, peak %.0f/s; high values while RAM is also full mean active swapping", p.HardFaultsAvg, p.HardFaultsPeak)
+		if p.GPUPctAvg > 0 || p.GPUPctPeak > 0 {
+			w("- GPU (busiest engine, Task Manager style): avg %.0f%%, peak %.0f%%", p.GPUPctAvg, p.GPUPctPeak)
+		}
+	} else {
+		w("- Performance counters were unavailable this run.")
+	}
+	if snap.Cores.NCores > 0 {
+		w("- Core spread: busiest %s averaged %.0f%%, quietest core averaged %.0f%%, across %d logical cores (a wide gap points at a single-thread-bound workload)",
+			snap.Cores.MaxCoreName, snap.Cores.MaxCoreAvg, snap.Cores.MinCoreAvg, snap.Cores.NCores)
+	}
+	if snap.Wifi.OK && snap.Wifi.Samples > 0 {
+		w("- WiFi %s: signal avg %.0f%%, worst %d%%, link rate avg %.0f Mbps, %d disconnect(s) during the sample",
+			snap.Wifi.SSID, snap.Wifi.SignalPctAvg, snap.Wifi.SignalPctMin, snap.Wifi.LinkMbpsAvg, snap.Wifi.Drops)
+	} else if snap.Wifi.OK {
+		w("- WiFi: not connected during the sample (on ethernet, or disconnected throughout)")
+	}
+	if snap.Power.OK {
+		bs, be := "unknown", "unknown"
+		if snap.Power.BatteryPctStart >= 0 {
+			bs = fmt.Sprintf("%d%%", snap.Power.BatteryPctStart)
+		}
+		if snap.Power.BatteryPctEnd >= 0 {
+			be = fmt.Sprintf("%d%%", snap.Power.BatteryPctEnd)
+		}
+		power := "AC power throughout, no battery"
+		if snap.Power.HasBattery {
+			power = fmt.Sprintf("battery %s at the start, %s at the end", bs, be)
+			if snap.Power.OnACStart || snap.Power.OnACEnd {
+				power += " (on AC for part of the sample)"
+			} else {
+				power += " (on battery throughout)"
+			}
+		}
+		if snap.Power.SaverActive {
+			power += "; battery saver was on at the end of the sample (caps CPU)"
+		}
+		w("- Power: %s", power)
+	}
+
+	w("")
 	w("## Built-in findings (rule-based, offline)")
 	for _, f := range findings {
 		w("")

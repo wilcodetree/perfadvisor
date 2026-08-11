@@ -86,6 +86,55 @@ sample {{.Snap.SampleSeconds}} s{{if not .Snap.Elevated}}, standard user (not el
   </table>
 </div>
 
+{{if or .Snap.Pressure.OK (gt .Snap.Cores.NCores 0) .Snap.Wifi.OK .Snap.Power.OK}}
+<h2>Pressure and saturation</h2>
+<div class="card">
+  <div class="sub" style="margin-bottom:8px">Same signals the live dashboard's pressure gauges and verdict line use,
+  averaged and peaked across the whole sample window.</div>
+  {{if .Snap.Pressure.OK}}
+  <table>
+    <tr><th>CPU queue</th><td>avg {{f1 .Snap.Pressure.CPUQueueAvg}}, peak {{f1 .Snap.Pressure.CPUQueuePeak}}</td>
+        <td class="off">runnable threads waiting, {{.Snap.LogicalCores}} logical cores</td></tr>
+    {{if gt .Snap.Pressure.CPUPerfPctAvg 0.0}}
+    <tr><th>CPU clock</th><td>avg {{f0 .Snap.Pressure.CPUPerfPctAvg}}%, min {{f0 .Snap.Pressure.CPUPerfPctMin}}% of base</td>
+        <td class="off">sustained below 75% usually means throttling</td></tr>
+    {{end}}
+    <tr><th>Disk</th><td>latency avg {{f1 .Snap.Pressure.DiskLatMsAvg}} ms, peak {{f1 .Snap.Pressure.DiskLatMsPeak}} ms</td>
+        <td class="off">queue avg {{f1 .Snap.Pressure.DiskQueueAvg}}, peak {{f1 .Snap.Pressure.DiskQueuePeak}}</td></tr>
+    <tr><th>Hard faults</th><td>avg {{f0 .Snap.Pressure.HardFaultsAvg}}/s, peak {{f0 .Snap.Pressure.HardFaultsPeak}}/s</td>
+        <td class="off">pages read back from disk; high with full RAM means swapping</td></tr>
+    {{if gt .Snap.Pressure.GPUPctPeak 0.0}}
+    <tr><th>GPU</th><td>avg {{f0 .Snap.Pressure.GPUPctAvg}}%, peak {{f0 .Snap.Pressure.GPUPctPeak}}%</td>
+        <td class="off">busiest engine, Task Manager style</td></tr>
+    {{end}}
+  </table>
+  {{else}}<div class="off">Performance counters were unavailable this run.</div>{{end}}
+  {{if gt .Snap.Cores.NCores 0}}
+  <div class="label">Core spread</div>
+  <table><tr><td>{{.Snap.Cores.MaxCoreName}} (busiest)</td><td class="num">{{f0 .Snap.Cores.MaxCoreAvg}}% avg</td>
+      <td>quietest core</td><td class="num">{{f0 .Snap.Cores.MinCoreAvg}}% avg</td>
+      <td class="off">across {{.Snap.Cores.NCores}} logical cores</td></tr></table>
+  {{end}}
+  {{if .Snap.Wifi.OK}}
+  <div class="label">WiFi</div>
+  {{if gt .Snap.Wifi.Samples 0}}
+  <table><tr><td>{{.Snap.Wifi.SSID}}</td><td class="num">avg {{f0 .Snap.Wifi.SignalPctAvg}}%</td>
+      <td class="num">worst {{.Snap.Wifi.SignalPctMin}}%</td><td class="num">{{f0 .Snap.Wifi.LinkMbpsAvg}} Mbps</td>
+      <td class="off">{{.Snap.Wifi.Drops}} disconnect(s) during the sample</td></tr></table>
+  {{else}}<div class="off">Not connected during the sample.</div>{{end}}
+  {{end}}
+  {{if .Snap.Power.OK}}
+  <div class="label">Power</div>
+  {{if .Snap.Power.HasBattery}}
+  <table><tr><td>Battery {{if ge .Snap.Power.BatteryPctStart 0}}{{.Snap.Power.BatteryPctStart}}%{{else}}?{{end}} to
+      {{if ge .Snap.Power.BatteryPctEnd 0}}{{.Snap.Power.BatteryPctEnd}}%{{else}}?{{end}}</td>
+      <td class="off">{{if or .Snap.Power.OnACStart .Snap.Power.OnACEnd}}on AC part of the sample{{else}}on battery throughout{{end}}
+      {{if .Snap.Power.SaverActive}}, battery saver on (caps CPU){{end}}</td></tr></table>
+  {{else}}<div class="off">AC power, no battery.</div>{{end}}
+  {{end}}
+</div>
+{{end}}
+
 <h2>Startup</h2>
 <div class="card">
   {{if .Snap.Autoruns}}
