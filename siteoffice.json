@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "type": "project",
+  "name": "perfadvisor",
+  "parent": "ZeroNonsense.dev",
+  "children": [],
+  "language": "en",
+  "approver": "",
+  "instructionFile": "AGENTS.md",
+  "setup": "structure-only",
+  "migratedOn": "2026-09-08"
+}
